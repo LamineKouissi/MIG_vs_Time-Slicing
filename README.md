@@ -1,29 +1,66 @@
 # MIG vs Time-Slice Experiment
 
-This repository automates the benchmark experiment comparing NVIDIA Multi-Instance GPU (MIG) hardware isolation against standard time-slicing using vLLM.
+This repository benchmarks **NVIDIA Multi-Instance GPU (MIG) hardware isolation** against **standard GPU time-slicing** for LLM inference using [vLLM](https://github.com/vllm-project/vllm).
 
-## Project Structure
+The experiment proves that when two workloads share a GPU via time-slicing, a traffic spike on one workload degrades the other's latency ("noisy neighbor" problem). MIG eliminates this by giving each workload its own dedicated hardware partition.
 
-- `mig-experiment-guide.md`: A detailed, step-by-step educational guide. If you want to understand exactly what each command and script does under the hood rather than just running the automated script, read this file!
-- `scripts/`: Contains all the bash scripts needed to run the benchmark.
-  - `run_experiment.sh`: The master script that automates the entire experiment from setup to teardown.
-  - `run_bench.sh`: Wrapper for `vllm bench serve` load generator.
-  - `run_test_pattern.sh`: Orchestrates steady load and spikes across instances.
-  - `gpu_util_logger.sh`: Logs GPU utilization metrics periodically.
-  - `compare_results.sh`: Analyzes and formats the JSON outputs from vLLM.
-- `results/`: Directory where all generated logs, CSVs, and JSON test results will be stored.
+## Requirements
 
-## How to Run
+- **GPU:** NVIDIA A100, A30, H100, or H200 (MIG-capable)
+- **Software:** Docker with [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), `sudo` access
+- **Disk:** ~30 GB free (for the model + Docker images)
+- **Time:** ~30–60 minutes for the full experiment
 
-You can run the entire experiment automatically with a single command. The script will handle dependencies, Docker containers, MIG configurations, benchmarking, and cleanup.
+## Quick Start
 
 ```bash
+git clone https://github.com/LamineKouissi/MIG_vs_Time-Slicing.git
+cd MIG_vs_Time-Slicing
 chmod +x scripts/*.sh
 ./scripts/run_experiment.sh
 ```
 
-**Note**: You may be prompted for your `sudo` password as it requires administrative privileges to install prerequisites, run Docker containers, and configure NVIDIA MIG settings.
+That's it. The script handles everything: installing dependencies, downloading the model, running both benchmark phases, and printing the results. You'll be prompted for your `sudo` password.
+
+> **Want to understand what each step does?** Read the [Experiment Guide](mig-experiment-guide.md) — it explains every command, every script, and how they connect to each other.
+
+## Project Structure
+
+```
+MIG_vs_Time-Slicing/
+├── mig-experiment-guide.md           # Detailed educational guide (start here to learn)
+├── README.md                         # This file
+├── scripts/
+│   ├── run_experiment.sh             # Master script — runs the full experiment
+│   ├── run_test_pattern.sh           # Orchestrates the noisy-neighbor scenario
+│   ├── run_bench.sh                  # Fires load at a single vLLM instance
+│   ├── gpu_util_logger.sh            # Logs GPU utilization to CSV every second
+│   └── compare_results.sh           # Prints the final results comparison table
+└── results/                          # Created at runtime — all JSON, CSV, and log outputs
+```
+
+### How the scripts call each other
+
+```
+run_experiment.sh            ← You run this one
+├── gpu_util_logger.sh       ← Background: logs GPU stats
+├── run_test_pattern.sh      ← Orchestrates the noisy-neighbor test
+│   └── run_bench.sh         ← Fires N requests at R req/s at one instance
+└── compare_results.sh       ← Reads results/ and prints comparison table
+```
 
 ## Results
 
-After the run is complete, `compare_results.sh` will output a comparison table of Baseline (Time-Sliced) vs MIG performance, specifically looking at P99 Time to First Token (TTFT) and Time Per Output Token (TPOT) stability.
+After the experiment completes, `compare_results.sh` prints a table comparing Baseline (Time-Sliced) vs MIG across these metrics:
+
+| Metric | What it means |
+|--------|---------------|
+| **p99 TTFT** | Worst-case Time To First Token (startup latency) |
+| **p99 TPOT** | Worst-case Time Per Output Token (generation speed) |
+| **TPOT StdDev** | Generation stability — lower = smoother output |
+
+**What to look for:** Instance B's p99 TTFT should be significantly worse in the Baseline phase than in the MIG phase, proving that hardware isolation prevents noisy-neighbor interference.
+
+## License
+
+See [LICENSE](LICENSE).
