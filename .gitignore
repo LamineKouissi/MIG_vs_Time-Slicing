@@ -1,0 +1,7 @@
+# Python environments created by the scripts
+.venv/
+.venv-v2/
+# Raw per-request results are large; publish them as a release archive instead
+results/**/*.json
+results/**/*.log
+__pycache__/
