@@ -1,0 +1,13 @@
+mode,case,runs,ttft_p50,ttft_p99,tpot_p50,tpot_p99,tpot_std,itl_p99,throughput,failed,ttft_p99_range,throughput_range
+Time-slicing,"Quiet tenant B, neighbour idle",5,38.2,50.85,10.84,11.34,0.18,17.23,1.91,0,43.0-52.4,1.91-1.91
+Time-slicing,"Quiet tenant B, neighbour spiking",5,99.21,137.84,28.61,30.37,2.19,54.28,1.79,0,131.3-140.8,1.79-1.80
+Time-slicing,"Noisy tenant A, spiking alone",5,3133.04,7849.98,50.84,51.99,7.35,99.89,37.63,0,6874.9-8057.8,37.27-38.34
+Time-slicing,"Noisy tenant A, spiking next to B",5,13209.67,18831.38,60.39,88.77,21.07,264.5,29.71,0,18246.9-18901.4,29.33-30.26
+MPS,"Quiet tenant B, neighbour idle",5,38.33,50.59,11.05,11.51,0.17,17.24,1.91,0,45.0-53.7,1.91-1.91
+MPS,"Quiet tenant B, neighbour spiking",5,127.8,216.31,41.45,46.16,4.37,81.09,1.72,0,186.6-226.3,1.71-1.74
+MPS,"Noisy tenant A, spiking alone",5,3173.72,7839.13,51.11,52.03,7.35,98.18,37.49,0,7176.4-8043.4,37.27-38.01
+MPS,"Noisy tenant A, spiking next to B",5,5814.25,12887.55,59.03,62.46,9.89,119.4,33.64,0,11605.4-13189.5,32.66-34.29
+MIG 3g.40gb,"Quiet tenant B, neighbour idle",5,70.65,105.23,20.51,21.57,0.47,35.39,1.84,0,88.7-121.8,1.84-1.85
+MIG 3g.40gb,"Quiet tenant B, neighbour spiking",5,73.92,100.03,21.0,22.1,0.5,38.64,1.84,0,94.1-102.4,1.84-1.84
+MIG 3g.40gb,"Noisy tenant A, spiking alone",5,12605.7,30657.53,82.48,85.58,9.34,290.54,23.06,0,28674.2-30857.3,22.73-23.46
+MIG 3g.40gb,"Noisy tenant A, spiking next to B",5,14740.72,33313.94,84.26,93.76,10.79,317.93,22.3,0,30733.7-33593.7,21.74-22.74

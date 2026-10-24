@@ -68,6 +68,22 @@ Notes:
 - GPU counters come from DCGM (SM and DRAM activity) when `dcgmi` is installed, otherwise from `nvidia-smi`, which reports little under MIG.
 - GPU power is logged in every mode with `nvidia-smi` (`power.draw`). It is board power for the whole GPU, so under MIG it covers both slices. Energy per output token divides a window's energy by all tokens generated in it.
 
+## Results (v2, 24 Oct 2026)
+
+- **Hardware and software:** NVIDIA A100 80GB PCIe on Azure (`Standard_NC24ads_A100_v4`), driver 580.178.04, CUDA 13.0, vLLM 0.29.0 (server image and client), `Qwen/Qwen2.5-7B-Instruct`, 128 tokens in and out.
+- **Runs:** 5 per mode, 30 s windows, 0 failed requests. MIG mode needed a VM reboot on Azure, so it ran as a second invocation on the same VM with the same settings and was merged into this run (its `env.txt` is in `mig/env_mig_run.txt`).
+- **Full table:** [`results/v2/20261024-190042/summary.md`](results/v2/20261024-190042/summary.md). Raw per-request JSON (about 150 MB) is not committed.
+- v1 ran on an H100 PCIe 80 GB, so v1 and v2 numbers come from different GPUs.
+
+![v2 results](results/v2/20261024-190042/v2_summary.png)
+
+| Metric | Time-slicing | MPS | MIG 3g.40gb |
+| --- | --- | --- | --- |
+| Quiet tenant B, p99 TTFT, A idle / A spiking (ms) | 50.8 / 137.8 | 50.6 / 216.3 | 105.2 / 100.0 |
+| Quiet tenant B, median TPOT, A idle / A spiking (ms) | 10.8 / 28.6 | 11.0 / 41.5 | 20.5 / 21.0 |
+| Noisy tenant A, throughput, alone / next to B (req/s) | 37.6 / 29.7 | 37.5 / 33.6 | 23.1 / 22.3 |
+| Energy per output token, A spiking and B steady (J) | 0.082 | 0.074 | 0.104 |
+
 ## v1: the original single run
 
 The first version is kept in `scripts/` (`./scripts/run_experiment.sh`) and explained step by step in the [Experiment Guide](mig-experiment-guide.md). It ran each phase once, compared time-slicing with MIG only, and reported percentiles over the quiet tenant's whole run rather than the spike window. v2 fixes those limits.
