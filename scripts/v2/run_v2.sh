@@ -23,6 +23,7 @@ OUT="$BASE_DIR/results/v2/$RUN_ID"
 MPS_PIPE=/tmp/nvidia-mps
 MPS_LOG=/tmp/nvidia-mps-log
 LOGGER_PID=""
+POWER_PID=""
 SUDO_KEEPALIVE_PID=""
 mkdir -p "$OUT"
 
@@ -65,8 +66,9 @@ setup_env() {
 }
 
 record_env() {
-    local gpu cuda client
+    local gpu cuda client power_limit
     gpu=$(nvidia-smi -i "$GPU" --query-gpu=name,driver_version,memory.total --format=csv,noheader || true)
+    power_limit=$(nvidia-smi -i "$GPU" --query-gpu=power.limit --format=csv,noheader || true)
     cuda=$(nvidia-smi | sed -n 's/.*CUDA Version: \([0-9.]*\).*/\1/p' || true)
     client=$(python -c 'import importlib.metadata as m; print(m.version("vllm"))' || true)
     cat > "$OUT/env.txt" <<EOF
@@ -87,6 +89,8 @@ mig_profile: $MIG_PROFILE
 mem_shared: $MEM_SHARED
 mem_mig: $MEM_MIG
 mps_thread_pct: ${MPS_PCT:-none}
+power_limit: $power_limit
+power_interval_s: $POWER_INTERVAL_S
 EOF
     log "Environment: $gpu | CUDA $cuda | vLLM $client"
 }
@@ -205,25 +209,37 @@ warmup() { # mode
     bench "$PORT_B" "$WARMUP_PROMPTS" 5 7 "$OUT/$1/warmup_B.json"
 }
 
+now() { date +%s.%N; }
+
+mark_window() { # mode rep window start_s   (end = now); the analysis matches power samples to windows
+    echo "$1,$2,$3,$4,$(now)" >>"$OUT/windows.csv"
+}
+
 run_rep() { # mode rep
-    local mode=$1 rep=$2 d="$OUT/$1/rep$2" s=$(( $2 * 100 ))
+    local mode=$1 rep=$2 d="$OUT/$1/rep$2" s=$(( $2 * 100 )) t0
     mkdir -p "$d"
 
     log "[$mode rep $rep/$REPS] B alone at $B_RATE req/s (A idle)"
+    t0=$(now)
     bench "$PORT_B" "$B_PROMPTS" "$B_RATE" $(( s + 1 )) "$d/idle_B.json"
+    mark_window "$mode" "$rep" idle "$t0"
     sleep "$COOLDOWN_S"
 
     log "[$mode rep $rep/$REPS] A spike alone at $A_RATE req/s (B idle)"
+    t0=$(now)
     bench "$PORT_A" "$A_PROMPTS" "$A_RATE" $(( s + 2 )) "$d/spikealone_A.json"
+    mark_window "$mode" "$rep" spikealone "$t0"
     sleep "$COOLDOWN_S"
 
     log "[$mode rep $rep/$REPS] A spiking and B steady over the same window"
+    t0=$(now)
     bench "$PORT_A" "$A_PROMPTS" "$A_RATE" $(( s + 3 )) "$d/contended_A.json" &
     local pid_a=$!
     bench "$PORT_B" "$B_PROMPTS" "$B_RATE" $(( s + 4 )) "$d/contended_B.json" &
     local pid_b=$!
     wait "$pid_a"
     wait "$pid_b"
+    mark_window "$mode" "$rep" contended "$t0"
     sleep "$COOLDOWN_S"
 }
 
@@ -235,13 +251,18 @@ start_gpu_logger() { # mode
         "$BASE_DIR/scripts/gpu_util_logger.sh" "$OUT/$1/nvidia_smi.csv" >/dev/null 2>&1 &
     fi
     LOGGER_PID=$!
+    # Board power for the whole GPU, in every mode (MIG included), for energy per token.
+    "$SCRIPT_DIR/power_logger.sh" "$GPU" "$OUT/$1/power.csv" "$POWER_INTERVAL_S" >/dev/null 2>&1 &
+    POWER_PID=$!
 }
 stop_gpu_logger() {
-    if [ -n "$LOGGER_PID" ]; then
-        kill "$LOGGER_PID" 2>/dev/null || true
-        wait "$LOGGER_PID" 2>/dev/null || true
-        LOGGER_PID=""
-    fi
+    local pid
+    for pid in $LOGGER_PID $POWER_PID; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    LOGGER_PID=""
+    POWER_PID=""
 }
 
 # ------------------------------------------------------------- lifecycle ----
@@ -266,6 +287,7 @@ main() {
     stop_servers; teardown_mps; teardown_mig     # start from a clean GPU
     setup_env
     record_env
+    echo "mode,rep,window,start_s,end_s" >"$OUT/windows.csv"
 
     for mode in $MODES; do
         case "$mode" in

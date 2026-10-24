@@ -13,6 +13,7 @@ MIG_PROFILE="${MIG_PROFILE:-3g.40gb}"            # must exist on your GPU: nvidi
 MEM_SHARED="${MEM_SHARED:-0.45}"                 # per-instance memory fraction on the shared GPU
 MEM_MIG="${MEM_MIG:-0.90}"                       # per-instance memory fraction inside a MIG slice
 MPS_PCT="${MPS_PCT:-}"                           # optional CUDA_MPS_ACTIVE_THREAD_PERCENTAGE per instance (empty = no cap)
+POWER_INTERVAL_S="${POWER_INTERVAL_S:-0.5}"      # GPU power sampling interval, seconds
 
 # --- Workload ---
 IN_LEN="${IN_LEN:-128}"                          # prompt tokens per request

@@ -25,9 +25,11 @@ chmod +x scripts/*.sh scripts/v2/*.sh
 Results land in `results/v2/<run-id>/`:
 
 - `summary.md` and `summary.csv`: every metric for every mode and window, plus headline numbers
+- `energy.csv`: mean GPU power, energy and energy per output token for every mode and window (also in `summary.md`)
 - `v2_summary.png` / `.svg`: the figure
 - `env.txt`: GPU, driver, CUDA and vLLM versions and every setting used
 - `<mode>/rep<N>/*.json`: raw per-request results from `vllm bench serve --save-detailed`
+- `<mode>/power.csv` and `windows.csv`: raw GPU power samples and the start and end time of every window
 
 Settings live in [`scripts/v2/config.sh`](scripts/v2/config.sh) and can be overridden from the environment:
 
@@ -44,6 +46,7 @@ REPS=3 MODES="timeslice mig" ./scripts/v2/run_v2.sh
 | `B_RATE` / `A_RATE` | `2` / `50` | Request rates of the quiet and noisy tenant (req/s, integers) |
 | `WINDOW_S` | `30` | Length of each measured window (s) |
 | `MPS_PCT` | empty | Optional `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE` cap per instance |
+| `POWER_INTERVAL_S` | `0.5` | GPU power sampling interval (s) |
 
 ## What v2 measures
 
@@ -63,6 +66,7 @@ Notes:
 - MPS mode switches the GPU to exclusive-process compute mode, so an instance that fails to attach to MPS fails loudly instead of silently time-slicing.
 - If a run stops early, analyse what it collected: `python3 scripts/v2/analyze_v2.py results/v2/<run-id>`.
 - GPU counters come from DCGM (SM and DRAM activity) when `dcgmi` is installed, otherwise from `nvidia-smi`, which reports little under MIG.
+- GPU power is logged in every mode with `nvidia-smi` (`power.draw`). It is board power for the whole GPU, so under MIG it covers both slices. Energy per output token divides a window's energy by all tokens generated in it.
 
 ## v1: the original single run
 
@@ -78,6 +82,7 @@ MIG_vs_Time-Slicing/
 │   ├── v2/
 │   │   ├── run_v2.sh            # v2: time-slicing vs MPS vs MIG, repeated runs
 │   │   ├── config.sh            # v2 settings
+│   │   ├── power_logger.sh      # v2 GPU power logger
 │   │   └── analyze_v2.py        # v2 summary table and figure
 │   ├── run_experiment.sh        # v1 master script
 │   ├── run_test_pattern.sh      # v1 noisy-neighbour pattern

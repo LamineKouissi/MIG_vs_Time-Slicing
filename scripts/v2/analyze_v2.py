@@ -9,6 +9,9 @@ and writes summary.csv, summary.md and v2_summary.png / .svg into <run>.
 Per-request metrics (TTFT, TPOT, ITL) are pooled across repetitions for the
 table; bars in the figure show the median of the per-repetition values with
 min-max whiskers, so the spread between runs stays visible.
+
+If the run logged GPU power (<run>/<mode>/power.csv and <run>/windows.csv),
+energy per window and per output token also go into summary.md and energy.csv.
 """
 import csv
 import json
@@ -25,10 +28,24 @@ CASES = {
     "A_busy": ("contended_A", "Noisy tenant A, spiking next to B"),
 }
 METRICS = ["ttft_p50", "ttft_p99", "tpot_p50", "tpot_p99", "tpot_std", "itl_p99", "throughput", "failed"]
+WINDOWS = {   # window in windows.csv -> result files whose output tokens it produced
+    "idle": (("idle_B",), "B alone, A idle"),
+    "spikealone": (("spikealone_A",), "A spiking alone"),
+    "contended": (("contended_A", "contended_B"), "A spiking, B steady"),
+}
 
 
 def pct(values, q):
     return float(np.percentile(values, q)) if len(values) else float("nan")
+
+
+def finite_median(values):
+    values = [v for v in values if np.isfinite(v)]
+    return float(np.median(values)) if values else float("nan")
+
+
+def fmt(value, spec):
+    return format(value, spec) if np.isfinite(value) else "n/a"
 
 
 def per_request(result):
@@ -78,6 +95,98 @@ def collect(run):
     return out
 
 
+def read_power(path):
+    """Epoch times (s) and board power (W) from power.csv, skipping unreadable samples."""
+    samples = []
+    with open(path) as f:
+        for row in csv.DictReader(f):
+            try:
+                samples.append((float(row["epoch_s"]), float(row["power_w"])))
+            except (TypeError, ValueError):   # e.g. "[N/A]"
+                continue
+    samples.sort()
+    return np.array([s[0] for s in samples]), np.array([s[1] for s in samples])
+
+
+def mean_power(t, w, start, end):
+    """Time-weighted mean power (W) of the samples inside [start, end]."""
+    inside = (t >= start) & (t <= end)
+    t, w = t[inside], w[inside]
+    if len(t) < 2:
+        return float("nan")
+    return float(np.sum((w[1:] + w[:-1]) / 2 * np.diff(t)) / (t[-1] - t[0]))
+
+
+def output_tokens(path):
+    r = json.loads(path.read_text())
+    errors = r.get("errors") or [""] * len(r["output_lens"])
+    return sum(n for n, err in zip(r["output_lens"], errors) if not err)
+
+
+def collect_energy(run):
+    """Per (mode, window): per-run mean power (W), energy (J) and joules per output token."""
+    path = run / "windows.csv"
+    if not path.exists():
+        return {}
+    power, out = {}, {}
+    with open(path) as f:
+        for row in csv.DictReader(f):
+            mode, window = row["mode"], row["window"]
+            if window not in WINDOWS:
+                continue
+            files = [run / mode / f"rep{row['rep']}" / f"{stem}.json" for stem in WINDOWS[window][0]]
+            if not all(p.exists() for p in files):
+                continue
+            if mode not in power:
+                p = run / mode / "power.csv"
+                power[mode] = read_power(p) if p.exists() else (np.array([]), np.array([]))
+            start, end = float(row["start_s"]), float(row["end_s"])
+            watts = mean_power(*power[mode], start, end)
+            joules = watts * (end - start)
+            tokens = sum(output_tokens(p) for p in files)
+            out.setdefault((mode, window), []).append({
+                "watts": watts, "joules": joules, "tokens": tokens,
+                "j_per_token": joules / tokens if tokens else float("nan"),
+            })
+    return out
+
+
+def write_energy(run, energy, env):
+    """energy.csv plus the markdown lines for summary.md (empty if no power was logged)."""
+    rows = []
+    for mode, label in MODES:
+        for window, (_, desc) in WINDOWS.items():
+            reps = energy.get((mode, window))
+            if not reps:
+                continue
+            jpt = [r["j_per_token"] for r in reps if np.isfinite(r["j_per_token"])]
+            rows.append({
+                "mode": mode_label(mode, label, env), "window": desc, "runs": len(reps),
+                "power_w": finite_median([r["watts"] for r in reps]),
+                "energy_kj": finite_median([r["joules"] for r in reps]) / 1e3,
+                "output_tokens": finite_median([r["tokens"] for r in reps]),
+                "j_per_token": finite_median(jpt),
+                "j_per_token_range": f"{min(jpt):.3f}-{max(jpt):.3f}" if jpt else "n/a",
+            })
+    if not rows:
+        return []
+    with open(run / "energy.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    lines = ["", "## GPU power and energy", "",
+             f"Whole-GPU board power from `nvidia-smi` (`power.draw`), sampled every "
+             f"{env.get('power_interval_s', '?')} s over each measured window. Median of the runs "
+             "(min-max range in energy.csv).", "",
+             "| Mode | Window | Runs | Mean power (W) | Energy (kJ) | Output tokens | Energy per output token (J) |",
+             "|" + " --- |" * 7]
+    for r in rows:
+        lines.append(f"| {r['mode']} | {r['window']} | {r['runs']} | {fmt(r['power_w'], '.0f')} | "
+                     f"{fmt(r['energy_kj'], '.1f')} | {fmt(r['output_tokens'], '.0f')} | "
+                     f"{fmt(r['j_per_token'], '.3f')} |")
+    return lines
+
+
 def read_env(run):
     env = {}
     path = run / "env.txt"
@@ -92,7 +201,7 @@ def mode_label(mode, label, env):
     return f"MIG {env.get('mig_profile', '')}".strip() if mode == "mig" else label
 
 
-def write_tables(run, res, env):
+def write_tables(run, res, env, energy):
     rows = []
     for mode, label in MODES:
         for case, (_, desc) in CASES.items():
@@ -124,11 +233,12 @@ def write_tables(run, res, env):
         lines.append(f"| {r['mode']} | {r['case']} | {r['runs']} | {r['ttft_p50']:.1f} | {r['ttft_p99']:.1f} | "
                      f"{r['tpot_p50']:.1f} | {r['tpot_p99']:.1f} | {r['tpot_std']:.2f} | {r['itl_p99']:.1f} | "
                      f"{r['throughput']:.2f} | {r['failed']} |")
-    lines += ["", "## Headline numbers", ""] + [f"- {s}" for s in headlines(res, env)]
+    lines += write_energy(run, energy, env)
+    lines += ["", "## Headline numbers", ""] + [f"- {s}" for s in headlines(res, env, energy)]
     (run / "summary.md").write_text("\n".join(lines) + "\n")
 
 
-def headlines(res, env):
+def headlines(res, env, energy):
     out = []
     for mode, label in MODES:
         name = mode_label(mode, label, env)
@@ -149,6 +259,12 @@ def headlines(res, env):
         ts, mg = res[("timeslice", "A_alone")]["pooled"], res[("mig", "A_alone")]["pooled"]
         out.append(f"A's capacity alone: {ts['throughput']:.1f} req/s on the whole GPU vs {mg['throughput']:.1f} "
                    f"req/s on its MIG slice.")
+    per_token = [(mode_label(m, lab, env), finite_median([r["j_per_token"] for r in energy[(m, "contended")]]))
+                 for m, lab in MODES if (m, "contended") in energy]
+    per_token = [(name, j) for name, j in per_token if np.isfinite(j)]
+    if per_token:
+        out.append("Energy per output token with A spiking and B steady (whole-GPU board power): "
+                   + ", ".join(f"{name} {j:.3f} J" for name, j in per_token) + ".")
     return out
 
 
@@ -200,7 +316,7 @@ def main():
     if not res:
         sys.exit(f"No results found under {run}")
     env = read_env(run)
-    write_tables(run, res, env)
+    write_tables(run, res, env, collect_energy(run))
     draw(run, res, env)
     print((run / "summary.md").read_text())
 
