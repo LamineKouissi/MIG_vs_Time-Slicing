@@ -212,14 +212,15 @@ def write_tables(run, res, env, energy):
             thr = [x["throughput"] for x in item["reps"]]
             rows.append({
                 "mode": mode_label(mode, label, env), "case": desc, "runs": item["n"],
-                **{k: round(v, 2) for k, v in item["pooled"].items()},
+                **item["pooled"],
                 "ttft_p99_range": f"{min(p99s):.1f}-{max(p99s):.1f}",
                 "throughput_range": f"{min(thr):.2f}-{max(thr):.2f}",
             })
     with open(run / "summary.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
-        writer.writerows(rows)
+        # Round only here: the markdown table formats the raw values, like the headlines.
+        writer.writerows({k: round(v, 2) if isinstance(v, float) else v for k, v in r.items()} for r in rows)
 
     header = ("| Mode | Case | Runs | p50 TTFT (ms) | p99 TTFT (ms) | p50 TPOT (ms) | p99 TPOT (ms) "
               "| TPOT std (ms) | p99 ITL (ms) | Throughput (req/s) | Failed |")
