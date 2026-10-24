@@ -33,7 +33,8 @@ die() { log "ERROR: $*"; exit 1; }
 # ---------------------------------------------------------------- setup ----
 
 keep_sudo_alive() {
-    sudo -v
+    # Passwordless sudo first: on cloud VMs `sudo -v` can still prompt (e.g. Azure's sudo group rule).
+    sudo -n true 2>/dev/null || sudo -v
     while true; do sudo -n true; sleep 60; done 2>/dev/null &
     SUDO_KEEPALIVE_PID=$!
 }
