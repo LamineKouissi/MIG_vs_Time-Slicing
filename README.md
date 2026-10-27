@@ -6,6 +6,24 @@ Two [vLLM](https://github.com/vllm-project/vllm) instances serving Qwen2.5-7B sh
 - **MPS** (CUDA Multi-Process Service): kernels from both processes run at the same time, without hard isolation.
 - **MIG** (Multi-Instance GPU): each instance gets its own hardware partition (default: two `3g.40gb` slices).
 
+## Results (v2, 24 Oct 2026)
+
+- **Hardware and software:** NVIDIA A100 80GB PCIe on Azure (`Standard_NC24ads_A100_v4`), driver 580.178.04, CUDA 13.0, vLLM 0.29.0 (server image and client), `Qwen/Qwen2.5-7B-Instruct`, 128 tokens in and out.
+- **Runs:** 5 per mode, 30 s windows, 0 failed requests. MIG mode needed a VM reboot on Azure, so it ran as a second invocation on the same VM with the same settings and was merged into this run (its `env.txt` is in `mig/env_mig_run.txt`).
+- **Full table:** [`results/v2/20261024-190042/summary.md`](results/v2/20261024-190042/summary.md). Raw per-request JSON (about 150 MB) is not committed.
+- v1 ran on an H100 PCIe 80 GB, so v1 and v2 numbers come from different GPUs.
+
+![v2 results](results/v2/20261024-190042/v2_summary.png)
+
+| Metric | Time-slicing | MPS | MIG 3g.40gb |
+| --- | --- | --- | --- |
+| Quiet tenant B, p99 TTFT, A idle / A spiking (ms) | 50.8 / 137.8 | 50.6 / 216.3 | 105.2 / 100.0 |
+| Quiet tenant B, median TPOT, A idle / A spiking (ms) | 10.8 / 28.6 | 11.0 / 41.5 | 20.5 / 21.0 |
+| Noisy tenant A, throughput, alone / next to B (req/s) | 37.6 / 29.7 | 37.5 / 33.6 | 23.1 / 22.3 |
+| Energy per output token, A spiking and B steady (J) | 0.082 | 0.074 | 0.104 |
+
+**Limitations:** one GPU type (A100 80GB PCIe) and one model (Qwen2.5-7B); fixed 128-token prompts and outputs, so the load is decode-heavy and prefill-heavy load isn't measured yet; the noisy tenant is overloaded in every mode (offered 50 req/s), so its time-to-first-token is mostly queueing; power is whole-board power, so under MIG it covers both slices.
+
 ## Requirements
 
 - **GPU:** a MIG-capable GPU that offers the profile you choose. The default `3g.40gb` exists on 80 GB A100 and H100 cards. Other GPUs use other profile names (for example `3g.20gb` on an A100 40GB). Check with `nvidia-smi mig -lgip` and set `MIG_PROFILE`.
@@ -67,22 +85,6 @@ Notes:
 - If a run stops early, analyse what it collected: `python3 scripts/v2/analyze_v2.py results/v2/<run-id>`.
 - GPU counters come from DCGM (SM and DRAM activity) when `dcgmi` is installed, otherwise from `nvidia-smi`, which reports little under MIG.
 - GPU power is logged in every mode with `nvidia-smi` (`power.draw`). It is board power for the whole GPU, so under MIG it covers both slices. Energy per output token divides a window's energy by all tokens generated in it.
-
-## Results (v2, 24 Oct 2026)
-
-- **Hardware and software:** NVIDIA A100 80GB PCIe on Azure (`Standard_NC24ads_A100_v4`), driver 580.178.04, CUDA 13.0, vLLM 0.29.0 (server image and client), `Qwen/Qwen2.5-7B-Instruct`, 128 tokens in and out.
-- **Runs:** 5 per mode, 30 s windows, 0 failed requests. MIG mode needed a VM reboot on Azure, so it ran as a second invocation on the same VM with the same settings and was merged into this run (its `env.txt` is in `mig/env_mig_run.txt`).
-- **Full table:** [`results/v2/20261024-190042/summary.md`](results/v2/20261024-190042/summary.md). Raw per-request JSON (about 150 MB) is not committed.
-- v1 ran on an H100 PCIe 80 GB, so v1 and v2 numbers come from different GPUs.
-
-![v2 results](results/v2/20261024-190042/v2_summary.png)
-
-| Metric | Time-slicing | MPS | MIG 3g.40gb |
-| --- | --- | --- | --- |
-| Quiet tenant B, p99 TTFT, A idle / A spiking (ms) | 50.8 / 137.8 | 50.6 / 216.3 | 105.2 / 100.0 |
-| Quiet tenant B, median TPOT, A idle / A spiking (ms) | 10.8 / 28.6 | 11.0 / 41.5 | 20.5 / 21.0 |
-| Noisy tenant A, throughput, alone / next to B (req/s) | 37.6 / 29.7 | 37.5 / 33.6 | 23.1 / 22.3 |
-| Energy per output token, A spiking and B steady (J) | 0.082 | 0.074 | 0.104 |
 
 ## v1: the original single run
 
